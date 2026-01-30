@@ -1,0 +1,926 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>熟語ログ＋ゆるSRS</title>
+  <style>
+    :root{
+      --bg:#0b0f17; --card:#111827; --muted:#94a3b8; --text:#e5e7eb;
+      --line:#1f2937; --btn:#1f2937; --btn2:#0f172a; --accent:#38bdf8;
+      --good:#22c55e; --bad:#ef4444;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;background:var(--bg);color:var(--text);
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Hiragino Kaku Gothic ProN","Noto Sans JP",Meiryo,sans-serif;
+    }
+    .wrap{max-width:980px;margin:0 auto;padding:14px 14px 24px;}
+    .top{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;}
+    h1{font-size:16px;margin:0;font-weight:800;letter-spacing:.02em;}
+    .tabs{display:flex;gap:8px;flex-wrap:wrap;}
+    .tab{
+      border:1px solid var(--line);background:transparent;color:var(--text);
+      padding:8px 10px;border-radius:12px;cursor:pointer;
+    }
+    .tab.active{border-color:var(--accent);box-shadow:0 0 0 1px rgba(56,189,248,.25) inset;}
+    .grid{display:grid;gap:12px;margin-top:12px;}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+    .muted{color:var(--muted);font-size:12px;line-height:1.5;}
+    input, textarea, select{
+      width:100%;
+      background:var(--btn2);border:1px solid var(--line);color:var(--text);
+      border-radius:12px;padding:10px 12px;outline:none;
+      font-size:14px;
+    }
+    input:focus, textarea:focus, select:focus{border-color:var(--accent);}
+    textarea{min-height:110px;resize:vertical;line-height:1.65;}
+    .btn{
+      background:var(--btn);border:1px solid var(--line);color:var(--text);
+      border-radius:12px;padding:10px 12px;cursor:pointer;
+      font-size:14px;
+    }
+    .btn.primary{border-color:rgba(56,189,248,.55);box-shadow:0 0 0 1px rgba(56,189,248,.18) inset;}
+    .btn.good{border-color:rgba(34,197,94,.65);}
+    .btn.bad{border-color:rgba(239,68,68,.65);}
+    .btn:disabled{opacity:.45;cursor:not-allowed;}
+    .pill{
+      display:inline-flex;align-items:center;gap:6px;
+      padding:6px 10px;border:1px solid var(--line);
+      border-radius:999px;background:rgba(15,23,42,.35);
+      font-size:12px;color:var(--muted);
+    }
+    .badge{
+      display:inline-flex;align-items:center;gap:6px;
+      padding:6px 10px;border-radius:999px;font-size:12px;
+      border:1px solid rgba(56,189,248,.35); color:var(--muted);
+      background:rgba(56,189,248,.08);
+    }
+    .bigword{font-size:36px;font-weight:900;letter-spacing:.02em;margin:6px 0 6px;}
+    .reading{font-size:14px;color:var(--muted);margin:0 0 10px;}
+    .example{white-space:pre-wrap;line-height:1.9;font-size:15px;margin:10px 0;}
+    .hr{height:1px;background:var(--line);margin:10px 0;}
+    .note{font-size:12px;color:var(--muted);line-height:1.65;}
+    .alert{
+      border:1px solid rgba(250,204,21,.35);
+      background:rgba(250,204,21,.08);
+      border-radius:16px;padding:12px;
+    }
+    .two{display:grid;grid-template-columns:1fr;gap:12px;}
+    @media (min-width:860px){ .two{grid-template-columns:1fr 1fr;} }
+    .small{width:auto;min-width:0}
+    .k{font-family:ui-monospace,Menlo,Consolas,monospace;background:#0f172a;border:1px solid var(--line);padding:2px 6px;border-radius:8px;font-size:12px;color:var(--muted);}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>熟語ログ＋ゆるSRS（スマホ用）</h1>
+    <div class="tabs">
+      <button class="tab active" id="tabStudy">学習</button>
+      <button class="tab" id="tabAdd">追加</button>
+      <button class="tab" id="tabList">一覧</button>
+      <button class="tab" id="tabSettings">設定</button>
+    </div>
+  </div>
+
+  <div class="grid" id="viewStudy"></div>
+  <div class="grid" id="viewAdd" style="display:none;"></div>
+  <div class="grid" id="viewList" style="display:none;"></div>
+  <div class="grid" id="viewSettings" style="display:none;"></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ===== utilities =====
+  const KEY = "madoka_jukugo_srs_v3";
+  const dayMs = 24*60*60*1000;
+
+  function safeId(){
+    return "id_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+  }
+  function now(){ return Date.now(); }
+  function clamp(n,min,max){ return Math.max(min, Math.min(max, n)); }
+
+  // localStorage fallback
+  let memStore = null;
+  function storageGet(){
+    try { return localStorage.getItem(KEY); } catch(e){ return memStore; }
+  }
+  function storageSet(v){
+    try { localStorage.setItem(KEY, v); } catch(e){ memStore = v; }
+  }
+
+  function el(id){ return document.getElementById(id); }
+
+  // Forgetting-curve-ish intervals (days)
+  const INTERVALS = [0, 1, 3, 7, 14, 30, 60, 120];
+
+  // ===== state =====
+  const state = {
+    cards: [],
+    settings: {
+      dailyNewHint: 6,
+      dailyReviewHint: 30,
+      sentenceFirst: true,   // show example first
+      maskInExample: true,   // replace word with □□ in example when sentenceFirst
+      writingReminderDay: 6, // 0=Sun ... 6=Sat
+      writingReminderEnabled: true,
+      // B option: core words are prioritized in queue
+      prioritizeCore: true
+    }
+  };
+
+  function makeCard(obj){
+    const t = now();
+    return {
+      id: safeId(),
+      word: (obj.word || "").trim(),
+      reading: (obj.reading || "").trim(),
+      example: (obj.example || "").trim(),
+      memo: (obj.memo || "").trim(),
+
+      tag: (obj.tag || "other").trim(), // core / stem / polish / user
+
+      createdAt: t,
+      updatedAt: t,
+
+      stage: 0,
+      successes: 0,
+      lapses: 0,
+      lastResult: null,
+      dueAt: t
+    };
+  }
+
+  // ===== Starter 40 (your list) =====
+  function starter40(){
+    const core = [
+      ["理由","りゆう","私はこの意見に賛成です。理由は二つあります。","作文の骨格","core"],
+      ["結果","けっか","実験では温度を上げると水の量が減りました。その結果、少しずつ蒸発していると分かります。","因果のまとめ","core"],
+      ["意見","いけん","私はこの意見に賛成です。自分の意見をはっきり言います。","自分の考え","core"],
+      ["必要","ひつよう","毎日少しずつ復習することが必要です。","「大切」の言い換え","core"],
+      ["大切","たいせつ","時間を決めて取り組むことが大切です。","主張","core"],
+      ["問題","もんだい","今の一番の問題は、時間が足りないことです。","課題提示","core"],
+      ["関係","かんけい","睡眠と集中力には関係があります。","つながり","core"],
+      ["方法","ほうほう","自分に合う方法で練習します。","やり方","core"],
+      ["理解","りかい","内容を理解できると、説明しやすくなります。","分かったこと","core"],
+      ["説明","せつめい","理由を順番に説明します。","内容整理","core"],
+      ["違い","ちがい","二つの考え方には違いがあります。","比較","core"],
+      ["特徴","とくちょう","この道具の特徴は、軽くて使いやすいことです。","まとめ","core"],
+      ["行動","こうどう","まず行動して、結果を確かめます。","実践","core"],
+      ["考え","かんがえ","自分の考えを言葉にします。","思考","core"],
+      ["経験","けいけん","私は同じような経験があります。","体験談","core"],
+    ];
+
+    // ② 理社頻出（15語）※「結果」は重複なので追加はしない
+    const stem = [
+      ["実験","じっけん","理科の実験で、温度を変えて比べました。","理科","stem"],
+      ["変化","へんか","温度が上がると、水のようすが変化します。","理科","stem"],
+      ["原因","げんいん","気温が下がったことが、作物が育たなかった原因です。","理社","stem"],
+      ["比較","ひかく","二つのデータを比較して、違いを見つけます。","理社","stem"],
+      ["効果","こうか","この方法には効果があります。","理科","stem"],
+      ["資料","しりょう","資料を見て、分かったことをまとめます。","社会","stem"],
+      ["地域","ちいき","この地域は雨が多いのが特徴です。","社会","stem"],
+      ["特性","とくせい","物質にはそれぞれ特性があります。","理科","stem"],
+      ["環境","かんきょう","環境を守るためにできることを考えます。","理社","stem"],
+      ["成長","せいちょう","植物は日光を受けて成長します。","理科","stem"],
+      ["生産","せいさん","この地域では米の生産がさかんです。","社会","stem"],
+      ["分布","ぶんぷ","人口の分布にはかたよりがあります。","社会","stem"],
+      ["影響","えいきょう","スマホを長時間使うと、睡眠に影響が出ることがあります。","理社","stem"],
+      ["構造","こうぞう","建物の構造を知ると、仕組みが分かります。","理科","stem"],
+    ];
+
+    // ③ ひらがなだと幼く見える（10語）
+    const polish = [
+      ["例えば","たとえば","例えば、朝の時間を決めると取り組みやすくなります。","接続語","polish"],
+      ["更に","さらに","更に、もう一つ理由があります。","接続語","polish"],
+      ["まず","まず","まず、結論を言います。","順序","polish"],
+      ["次に","つぎに","次に、理由を説明します。","順序","polish"],
+      ["最後に","さいごに","最後に、まとめを言います。","順序","polish"],
+      ["一方","いっぽう","一方で、別の考え方もあります。","対比","polish"],
+      ["場合","ばあい","この場合は、図を見て考えます。","条件","polish"],
+      ["自分","じぶん","自分の考えを短い文で言います。","主体","polish"],
+      ["未来","みらい","未来のために、今できることを考えます。","抽象語","polish"],
+      ["変","へん","変だと思ったところを言葉にします。","感想","polish"],
+    ];
+
+    // 結果はcoreにあるのでstem側の重複は避ける
+    const all = [...core, ...stem, ...polish];
+
+    // 重複排除（wordベース）
+    const seen = new Set();
+    const cards = [];
+    for(const [word, reading, example, memo, tag] of all){
+      if(seen.has(word)) continue;
+      seen.add(word);
+      cards.push(makeCard({word, reading, example, memo, tag}));
+    }
+    return cards;
+  }
+
+  function seed(){
+    return starter40();
+  }
+
+  function save(){
+    storageSet(JSON.stringify({ cards: state.cards, settings: state.settings }));
+  }
+
+  function load(){
+    const raw = storageGet();
+    if(!raw){
+      state.cards = seed();
+      save();
+      return;
+    }
+    try{
+      const parsed = JSON.parse(raw);
+      state.cards = parsed.cards || [];
+      state.settings = Object.assign(state.settings, parsed.settings || {});
+    }catch(e){
+      state.cards = seed();
+      save();
+    }
+  }
+
+  function isNew(card){ return card.successes === 0 && card.lapses === 0; }
+  function isCore(card){ return card.tag === "core"; }
+
+  // ===== Study queue (B: core prioritized) =====
+  function getTodayQueue(){
+    const t = now();
+    const due = state.cards.filter(c => c.dueAt <= t);
+
+    // sort: core first, then dueAt older first, then newer created
+    const sorted = due.slice().sort((a,b)=>{
+      if(state.settings.prioritizeCore){
+        const ac = isCore(a) ? 0 : 1;
+        const bc = isCore(b) ? 0 : 1;
+        if(ac !== bc) return ac - bc;
+      }
+      if(a.dueAt !== b.dueAt) return a.dueAt - b.dueAt;
+      return (b.createdAt||0) - (a.createdAt||0);
+    });
+
+    const newCards = sorted.filter(isNew).slice(0, state.settings.dailyNewHint);
+    const reviews = sorted.filter(c => !isNew(c)).slice(0, state.settings.dailyReviewHint);
+    return newCards.concat(reviews);
+  }
+
+  function scheduleNext(card, isCorrect){
+    const t = now();
+    card.updatedAt = t;
+    if(isCorrect){
+      card.successes += 1;
+      card.lastResult = "good";
+      // core words: stage advances normally (do not boost too hard)
+      card.stage = clamp(card.stage + 1, 0, INTERVALS.length - 1);
+    }else{
+      card.lapses += 1;
+      card.lastResult = "bad";
+      card.stage = clamp(card.stage - 1, 0, INTERVALS.length - 1);
+      if(card.stage > 2) card.stage = 1;
+    }
+    const intervalDays = INTERVALS[card.stage];
+    card.dueAt = t + intervalDays * dayMs;
+  }
+
+  function todayWritingReminder(){
+    if(!state.settings.writingReminderEnabled) return false;
+    const d = new Date();
+    return d.getDay() === state.settings.writingReminderDay;
+  }
+
+  function maskExample(example, word){
+    if(!example) return "";
+    if(!state.settings.maskInExample) return example;
+    if(!word) return example;
+    return example.split(word).join("□□");
+  }
+
+  // ===== tabs =====
+  const tabs = {
+    study: {btn: el("tabStudy"), view: el("viewStudy")},
+    add: {btn: el("tabAdd"), view: el("viewAdd")},
+    list: {btn: el("tabList"), view: el("viewList")},
+    settings: {btn: el("tabSettings"), view: el("viewSettings")}
+  };
+
+  function setTab(name){
+    Object.keys(tabs).forEach(k=>{
+      tabs[k].btn.classList.toggle("active", k===name);
+      tabs[k].view.style.display = (k===name) ? "" : "none";
+    });
+    if(name==="study") renderStudy();
+    if(name==="add") renderAdd();
+    if(name==="list") renderList();
+    if(name==="settings") renderSettings();
+  }
+
+  // ===== Study view =====
+  let queue = [];
+  let current = null;
+  let reveal = false;
+
+  function renderStudy(){
+    queue = getTodayQueue();
+    current = queue[0] || null;
+    reveal = false;
+
+    const v = tabs.study.view;
+    v.innerHTML = "";
+
+    if(todayWritingReminder()){
+      const a = document.createElement("div");
+      a.className = "alert";
+      a.innerHTML = `
+        <div class="row" style="justify-content:space-between;">
+          <div>
+            <div style="font-weight:800;margin-bottom:4px;">今日は「紙に1語」の日</div>
+            <div class="muted">このアプリは“見る・言う”中心。紙に書くのは週1で十分。</div>
+          </div>
+          <span class="badge">週1リマインド</span>
+        </div>
+      `;
+      v.appendChild(a);
+    }
+
+    const head = document.createElement("div");
+    head.className = "card";
+    head.innerHTML = `
+      <div class="row" style="justify-content:space-between;">
+        <span class="pill">今日のカード：${queue.length}枚</span>
+        <div class="row">
+          <span class="pill">①（骨格語彙）優先：${state.settings.prioritizeCore ? "ON" : "OFF"}</span>
+          <button class="btn" id="btnShuffle" ${queue.length ? "" : "disabled"}>順番シャッフル</button>
+          <button class="btn primary" id="btnRefresh">更新</button>
+        </div>
+      </div>
+      <div class="muted" style="margin-top:8px;">
+        コツ：例文を読んで「頭の中で書けたらOK」。書けなくても×にしない。1枚で終えてもOK。
+      </div>
+    `;
+    v.appendChild(head);
+
+    el("btnRefresh").addEventListener("click", renderStudy);
+    el("btnShuffle").addEventListener("click", ()=>{
+      for(let i=queue.length-1;i>0;i--){
+        const j = Math.floor(Math.random()*(i+1));
+        [queue[i], queue[j]] = [queue[j], queue[i]];
+      }
+      current = queue[0] || null;
+      reveal = false;
+      drawCard();
+    });
+
+    drawCard();
+  }
+
+  function drawCard(){
+    const v = tabs.study.view;
+    const old = document.getElementById("cardPanel");
+    if(old) old.remove();
+
+    const panel = document.createElement("div");
+    panel.className = "card";
+    panel.id = "cardPanel";
+
+    if(!current){
+      panel.innerHTML = `
+        <div style="font-weight:800;margin-bottom:6px;">今日のカードはありません</div>
+        <div class="muted">「追加」タブから熟語と例文を登録してください。</div>
+      `;
+      v.appendChild(panel);
+      return;
+    }
+
+    const ex = state.settings.sentenceFirst
+      ? maskExample(current.example, current.word)
+      : (current.example || "");
+
+    const showWord = reveal || !state.settings.sentenceFirst;
+
+    panel.innerHTML = `
+      <div class="row" style="justify-content:space-between;">
+        <span class="pill">タグ：${escapeHtml(tagLabel(current.tag))}</span>
+        <span class="pill">stage：${current.stage}</span>
+      </div>
+
+      ${state.settings.sentenceFirst ? `
+        <div class="example">${ex || "<span class='muted'>例文が未入力です</span>"}</div>
+        <div class="hr"></div>
+      ` : ``}
+
+      <div id="wordArea" style="${showWord ? "" : "display:none;"}">
+        <div class="bigword">${escapeHtml(current.word)}</div>
+        <div class="reading">${current.reading ? escapeHtml(current.reading) : "&nbsp;"}</div>
+        ${!state.settings.sentenceFirst ? `<div class="example">${escapeHtml(ex) || "<span class='muted'>例文が未入力です</span>"}</div>` : ``}
+        ${current.memo ? `<div class="note">メモ：${escapeHtml(current.memo)}</div>` : ``}
+        <div class="hr"></div>
+      </div>
+
+      <div class="row">
+        <button class="btn primary" id="btnToggleReveal">${showWord ? "答えを隠す" : "答えを表示"}</button>
+        <button class="btn" id="btnNext">次へ（評価しない）</button>
+      </div>
+
+      <div class="hr"></div>
+
+      <div class="row">
+        <button class="btn good" id="btnGood">できた</button>
+        <button class="btn bad" id="btnBad">まだ</button>
+      </div>
+
+      <div class="muted" style="margin-top:10px;">
+        <span class="k">できた</span>：次に出るまで少し伸びる ／ <span class="k">まだ</span>：早めにもう一度出会う
+      </div>
+    `;
+    v.appendChild(panel);
+
+    document.getElementById("btnToggleReveal").addEventListener("click", ()=>{
+      reveal = !reveal;
+      const wa = document.getElementById("wordArea");
+      wa.style.display = reveal ? "" : "none";
+      document.getElementById("btnToggleReveal").textContent = reveal ? "答えを隠す" : "答えを表示";
+    });
+
+    document.getElementById("btnNext").addEventListener("click", ()=>{
+      queue.shift();
+      current = queue[0] || null;
+      reveal = false;
+      drawCard();
+    });
+
+    document.getElementById("btnGood").addEventListener("click", ()=>answer(true));
+    document.getElementById("btnBad").addEventListener("click", ()=>answer(false));
+  }
+
+  function answer(isCorrect){
+    scheduleNext(current, isCorrect);
+    save();
+    queue.shift();
+    current = queue[0] || null;
+    reveal = false;
+    drawCard();
+  }
+
+  // ===== Add view =====
+  function renderAdd(){
+    const v = tabs.add.view;
+    v.innerHTML = `
+      <div class="two">
+        <div class="card">
+          <div style="font-weight:800;margin-bottom:6px;">1語ずつ追加</div>
+          <div class="muted" style="margin-bottom:10px;">
+            入力は音声入力でもOK。例文は長め推奨（2〜4文でもOK）。
+          </div>
+          <div class="row" style="margin-bottom:10px;">
+            <input id="inWord" placeholder="熟語（例：理由）" class="small" style="flex:1;min-width:180px;">
+            <input id="inReading" placeholder="よみ（任意：りゆう）" class="small" style="flex:1;min-width:180px;">
+          </div>
+          <textarea id="inExample" placeholder="例文（熟語を文脈の中で使う）"></textarea>
+          <input id="inMemo" placeholder="メモ（任意：どんな場面で使う？）" style="margin-top:10px;">
+          <div class="row" style="margin-top:10px;">
+            <select id="inTag" class="small" style="width:auto;min-width:160px;">
+              <option value="user" selected>追加語（本人）</option>
+              <option value="core">①骨格（優先）</option>
+              <option value="stem">②理社</option>
+              <option value="polish">③表現</option>
+            </select>
+            <button class="btn primary" id="btnAddOne">追加</button>
+          </div>
+          <div class="note" style="margin-top:10px;">
+            コツ：登録は「今日使った語」から。覚えるより“再会”を作る。
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="font-weight:800;margin-bottom:6px;">まとめて追加（CSV）</div>
+          <div class="muted" style="margin-bottom:10px;">
+            1行1語：<span class="k">word,reading,example,memo,tag</span>（tagは任意：core/stem/polish/user）
+          </div>
+          <textarea id="inBulk" placeholder='例：
+理由,りゆう,"理由は二つあります。",作文,core
+影響,えいきょう,"生活に影響が出ます。",理社,stem'></textarea>
+          <div class="row" style="margin-top:10px;">
+            <button class="btn primary" id="btnBulk">まとめて追加</button>
+            <button class="btn" id="btnExportHere">CSVエクスポート</button>
+            <button class="btn" id="btnClearAll" style="border-color:rgba(239,68,68,.55);">全削除</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.getElementById("btnAddOne").addEventListener("click", ()=>{
+      const word = document.getElementById("inWord").value.trim();
+      if(!word) return alert("熟語を入力してください");
+      const example = document.getElementById("inExample").value.trim();
+      if(!example) return alert("例文を入力してください（長め推奨）");
+
+      const tag = document.getElementById("inTag").value;
+      const card = makeCard({
+        word,
+        reading: document.getElementById("inReading").value,
+        example,
+        memo: document.getElementById("inMemo").value,
+        tag
+      });
+      state.cards.unshift(card);
+      save();
+
+      document.getElementById("inWord").value = "";
+      document.getElementById("inReading").value = "";
+      document.getElementById("inExample").value = "";
+      document.getElementById("inMemo").value = "";
+      document.getElementById("inTag").value = "user";
+
+      alert("追加しました");
+    });
+
+    document.getElementById("btnBulk").addEventListener("click", ()=>{
+      const text = document.getElementById("inBulk").value.trim();
+      if(!text) return alert("CSVを貼ってください");
+
+      const lines = text.split(/\r?\n/).filter(Boolean);
+      let added = 0;
+
+      lines.forEach(line=>{
+        const parts = parseCsvLine(line);
+        const word = (parts[0] || "").trim();
+        if(!word) return;
+        const reading = (parts[1] || "").trim();
+        const example = (parts[2] || "").trim();
+        const memo = (parts[3] || "").trim();
+        const tag = (parts[4] || "user").trim() || "user";
+        if(!example) return;
+        state.cards.unshift(makeCard({word, reading, example, memo, tag}));
+        added++;
+      });
+
+      save();
+      alert(added + "件追加しました");
+      document.getElementById("inBulk").value = "";
+    });
+
+    document.getElementById("btnExportHere").addEventListener("click", exportCsv);
+
+    document.getElementById("btnClearAll").addEventListener("click", ()=>{
+      if(!confirm("全データを削除します。よろしいですか？")) return;
+      state.cards = [];
+      save();
+      alert("削除しました");
+      renderAdd();
+    });
+  }
+
+  // ===== List view =====
+  function renderList(){
+    const v = tabs.list.view;
+    v.innerHTML = `
+      <div class="card">
+        <div class="row">
+          <input id="q" placeholder="検索（熟語 / よみ / 例文 / メモ）" style="flex:1;min-width:220px;">
+          <button class="btn" id="btnExport">CSV</button>
+        </div>
+        <div class="hr"></div>
+        <div class="muted" id="count"></div>
+        <div id="listArea" style="display:flex;flex-direction:column;gap:10px;margin-top:10px;"></div>
+      </div>
+    `;
+
+    document.getElementById("btnExport").addEventListener("click", exportCsv);
+
+    function draw(){
+      const q = document.getElementById("q").value.trim().toLowerCase();
+      const items = state.cards.filter(c=>{
+        if(!q) return true;
+        const s = (c.word+" "+c.reading+" "+c.example+" "+c.memo+" "+c.tag).toLowerCase();
+        return s.includes(q);
+      });
+
+      document.getElementById("count").textContent = `件数：${items.length} / ${state.cards.length}`;
+
+      const list = document.getElementById("listArea");
+      list.innerHTML = "";
+
+      items.forEach(c=>{
+        const it = document.createElement("div");
+        it.style.border = "1px solid var(--line)";
+        it.style.borderRadius = "14px";
+        it.style.padding = "10px";
+        it.style.background = "rgba(15,23,42,.25)";
+        it.innerHTML = `
+          <div class="row" style="justify-content:space-between;">
+            <div style="min-width:0;flex:1;">
+              <div style="font-weight:800;">
+                ${escapeHtml(c.word)} <span class="muted">${c.reading ? "（"+escapeHtml(c.reading)+"）" : ""}</span>
+                <span class="pill" style="margin-left:8px;">${escapeHtml(tagLabel(c.tag))}</span>
+              </div>
+              <div class="muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                ${escapeHtml((c.example||"").replace(/\n/g," "))}
+              </div>
+              ${c.memo ? `<div class="muted">メモ：${escapeHtml(c.memo)}</div>` : ``}
+              <div class="muted">due：${formatDate(c.dueAt)} / stage：${c.stage} / good：${c.successes} / bad：${c.lapses}</div>
+            </div>
+            <div class="row">
+              <button class="btn" data-reset="${c.id}">今日に戻す</button>
+              <button class="btn" data-del="${c.id}" style="border-color:rgba(239,68,68,.55);">削除</button>
+            </div>
+          </div>
+        `;
+        list.appendChild(it);
+      });
+
+      list.querySelectorAll("[data-del]").forEach(btn=>{
+        btn.addEventListener("click", ()=>{
+          const id = btn.getAttribute("data-del");
+          if(!confirm("削除しますか？")) return;
+          state.cards = state.cards.filter(x=>x.id !== id);
+          save();
+          draw();
+        });
+      });
+
+      list.querySelectorAll("[data-reset]").forEach(btn=>{
+        btn.addEventListener("click", ()=>{
+          const id = btn.getAttribute("data-reset");
+          const c = state.cards.find(x=>x.id===id);
+          if(!c) return;
+          c.dueAt = now();
+          c.stage = 0;
+          c.updatedAt = now();
+          save();
+          draw();
+          alert("今日に戻しました（すぐ出ます）");
+        });
+      });
+    }
+
+    document.getElementById("q").addEventListener("input", draw);
+    draw();
+  }
+
+  // ===== Settings view (includes Backup B) =====
+  function renderSettings(){
+    const s = state.settings;
+    const v = tabs.settings.view;
+
+    v.innerHTML = `
+      <div class="card">
+        <div style="font-weight:800;margin-bottom:6px;">表示・学習の設定</div>
+
+        <div class="row" style="margin:8px 0 10px;">
+          <label class="pill">新規/日（目安）
+            <input id="setNew" type="number" min="0" max="50" value="${s.dailyNewHint}" style="width:90px;margin-left:8px;">
+          </label>
+          <label class="pill">復習/日（目安）
+            <input id="setRev" type="number" min="0" max="200" value="${s.dailyReviewHint}" style="width:90px;margin-left:8px;">
+          </label>
+        </div>
+
+        <div class="row" style="margin:8px 0 10px;">
+          <label class="pill"><input id="setSentenceFirst" type="checkbox" ${s.sentenceFirst ? "checked":""}> 例文→答え（おすすめ）</label>
+          <label class="pill"><input id="setMask" type="checkbox" ${s.maskInExample ? "checked":""}> 例文内の熟語を「□□」</label>
+          <label class="pill"><input id="setPriorCore" type="checkbox" ${s.prioritizeCore ? "checked":""}> ①（骨格語彙）を優先</label>
+        </div>
+
+        <div class="hr"></div>
+
+        <div style="font-weight:800;margin-bottom:6px;">週1「紙に1語」リマインド</div>
+        <div class="row" style="margin:8px 0 10px;">
+          <label class="pill"><input id="setWritingEnable" type="checkbox" ${s.writingReminderEnabled ? "checked":""}> 有効</label>
+          <div style="flex:1;min-width:220px;">
+            <select id="setWritingDay">
+              ${weekdayOptions(s.writingReminderDay)}
+            </select>
+            <div class="muted" style="margin-top:6px;">例：土曜に「紙に1語」を出したい場合は土曜を選択</div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:10px;">
+          <button class="btn primary" id="btnSaveSettings">保存</button>
+          <button class="btn" id="btnExport">CSVエクスポート</button>
+          <button class="btn" id="btnResetApp" style="border-color:rgba(239,68,68,.55);">初期化</button>
+        </div>
+
+        <div class="hr"></div>
+
+        <div style="font-weight:800;margin-bottom:6px;">バックアップ（B案：文字列をコピペ）</div>
+        <div class="muted" style="margin-bottom:10px;">
+          週1回、下の「バックアップを作る」→文字列をiCloudメモに貼るだけでOK。復元は貼り戻してボタン。
+        </div>
+        <div class="row" style="margin-bottom:10px;">
+          <button class="btn primary" id="btnMakeBackup">バックアップを作る</button>
+          <button class="btn" id="btnCopyBackup" disabled>コピー</button>
+        </div>
+        <textarea id="backupText" placeholder="ここにバックアップ文字列が出ます（コピーしてメモへ）"></textarea>
+
+        <div class="hr"></div>
+
+        <div style="font-weight:800;margin-bottom:6px;">復元（貼り戻し）</div>
+        <div class="muted" style="margin-bottom:10px;">
+          iCloudメモの文字列をここに貼って「復元」。
+        </div>
+        <textarea id="restoreText" placeholder="バックアップ文字列をここに貼り付け"></textarea>
+        <div class="row" style="margin-top:10px;">
+          <button class="btn primary" id="btnRestore">復元する</button>
+        </div>
+
+        <div class="note" style="margin-top:10px;">
+          ※このアプリは端末内に保存します（localStorage）。ブラウザデータ削除で消える場合があります。バックアップが保険です。
+        </div>
+      </div>
+    `;
+
+    document.getElementById("btnExport").addEventListener("click", exportCsv);
+
+    document.getElementById("btnSaveSettings").addEventListener("click", ()=>{
+      const dn = parseInt(document.getElementById("setNew").value, 10);
+      const dr = parseInt(document.getElementById("setRev").value, 10);
+      state.settings.dailyNewHint = Number.isFinite(dn) ? dn : 6;
+      state.settings.dailyReviewHint = Number.isFinite(dr) ? dr : 30;
+      state.settings.sentenceFirst = document.getElementById("setSentenceFirst").checked;
+      state.settings.maskInExample = document.getElementById("setMask").checked;
+      state.settings.prioritizeCore = document.getElementById("setPriorCore").checked;
+      state.settings.writingReminderEnabled = document.getElementById("setWritingEnable").checked;
+      state.settings.writingReminderDay = parseInt(document.getElementById("setWritingDay").value, 10);
+      save();
+      alert("保存しました");
+    });
+
+    document.getElementById("btnResetApp").addEventListener("click", ()=>{
+      if(!confirm("アプリを初期化（全データ削除）します。よろしいですか？")) return;
+      state.cards = seed();
+      state.settings = {
+        dailyNewHint: 6,
+        dailyReviewHint: 30,
+        sentenceFirst: true,
+        maskInExample: true,
+        writingReminderDay: 6,
+        writingReminderEnabled: true,
+        prioritizeCore: true
+      };
+      save();
+      alert("初期化しました");
+      setTab("study");
+    });
+
+    // Backup B
+    const backupText = document.getElementById("backupText");
+    const btnCopy = document.getElementById("btnCopyBackup");
+
+    document.getElementById("btnMakeBackup").addEventListener("click", ()=>{
+      const payload = JSON.stringify({ cards: state.cards, settings: state.settings });
+      const packed = b64EncodeUnicode(payload);
+      backupText.value = packed;
+      btnCopy.disabled = false;
+      backupText.focus();
+      backupText.select();
+    });
+
+    btnCopy.addEventListener("click", async ()=>{
+      try{
+        await navigator.clipboard.writeText(backupText.value);
+        alert("コピーしました（iCloudメモに貼ってください）");
+      }catch(e){
+        // fallback: select text
+        backupText.focus();
+        backupText.select();
+        alert("コピーできない場合は、選択状態のまま手動コピーしてください");
+      }
+    });
+
+    document.getElementById("btnRestore").addEventListener("click", ()=>{
+      const txt = document.getElementById("restoreText").value.trim();
+      if(!txt) return alert("バックアップ文字列を貼ってください");
+      try{
+        const json = b64DecodeUnicode(txt);
+        const parsed = JSON.parse(json);
+        if(!parsed || !Array.isArray(parsed.cards)) throw new Error("invalid");
+        state.cards = parsed.cards;
+        state.settings = Object.assign(state.settings, parsed.settings || {});
+        save();
+        alert("復元しました");
+        setTab("study");
+      }catch(e){
+        alert("復元に失敗しました。文字列が途中で欠けていないか確認してください。");
+      }
+    });
+  }
+
+  // ===== CSV export/import helpers =====
+  function exportCsv(){
+    const header = "word,reading,example,memo,tag,stage,successes,lapses,dueAt\n";
+    const rows = state.cards.map(c=>{
+      return [
+        csvEsc(c.word),
+        csvEsc(c.reading),
+        csvEsc(c.example),
+        csvEsc(c.memo),
+        csvEsc(c.tag),
+        c.stage,
+        c.successes,
+        c.lapses,
+        c.dueAt
+      ].join(",");
+    }).join("\n");
+
+    const blob = new Blob([header + rows], {type:"text/csv;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "jukugo_log.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function csvEsc(s){
+    s = String(s || "");
+    return '"' + s.replace(/"/g,'""') + '"';
+  }
+
+  function parseCsvLine(line){
+    const out = [];
+    let cur = "";
+    let inQ = false;
+    for(let i=0;i<line.length;i++){
+      const ch = line[i];
+      if(inQ){
+        if(ch === '"'){
+          if(line[i+1] === '"'){ cur += '"'; i++; }
+          else inQ = false;
+        }else cur += ch;
+      }else{
+        if(ch === '"') inQ = true;
+        else if(ch === ','){ out.push(cur); cur=""; }
+        else cur += ch;
+      }
+    }
+    out.push(cur);
+    return out;
+  }
+
+  // ===== helpers =====
+  function formatDate(ms){
+    const d = new Date(ms);
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,"0");
+    const da = String(d.getDate()).padStart(2,"0");
+    return `${y}-${m}-${da}`;
+  }
+
+  function weekdayOptions(selected){
+    const names = ["日","月","火","水","木","金","土"];
+    return names.map((n,i)=>`<option value="${i}" ${i===selected?"selected":""}>${n}</option>`).join("");
+  }
+
+  function tagLabel(tag){
+    switch(tag){
+      case "core": return "①骨格（最重要）";
+      case "stem": return "②理社（頻出）";
+      case "polish": return "③表現（余裕）";
+      case "user": return "追加語（本人）";
+      default: return tag;
+    }
+  }
+
+  function escapeHtml(s){
+    return String(s||"")
+      .replace(/&/g,"&amp;")
+      .replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;")
+      .replace(/"/g,"&quot;")
+      .replace(/'/g,"&#39;");
+  }
+
+  // ===== Backup encoding (Unicode safe) =====
+  function b64EncodeUnicode(str){
+    const utf8 = new TextEncoder().encode(str);
+    let bin = "";
+    utf8.forEach(b => bin += String.fromCharCode(b));
+    return btoa(bin);
+  }
+  function b64DecodeUnicode(b64){
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  }
+
+  // ===== init =====
+  tabs.study.btn.addEventListener("click", ()=>setTab("study"));
+  tabs.add.btn.addEventListener("click", ()=>setTab("add"));
+  tabs.list.btn.addEventListener("click", ()=>setTab("list"));
+  tabs.settings.btn.addEventListener("click", ()=>setTab("settings"));
+
+  load();
+  setTab("study");
+
+})();
+</script>
+</body>
+</html>
